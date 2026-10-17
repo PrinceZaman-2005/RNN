@@ -1,77 +1,111 @@
-# Model Notes
+# RNN — IMDb Sentiment Classification
 
-## 1. Overview
+## 1. Dataset
 
-This model implements a basic **Recurrent Neural Network (RNN)** using PyTorch.
+This project uses the **IMDb Large Movie Review Dataset** to classify movie reviews as positive or negative.
 
-Its purpose is to process a sequence of numerical values and predict the next value using information encoded in the final recurrent output.
+**Dataset:** [`stanfordnlp/imdb`](https://huggingface.co/datasets/stanfordnlp/imdb) (Hugging Face)
 
-For example:
+| Property                |                      Value |
+| ----------------------- | -------------------------: |
+| Total reviews           |                     50,000 |
+| Training reviews        |                     25,000 |
+| Testing reviews         |                     25,000 |
+| Classes                 | Positive (1), Negative (0) |
+| Maximum vocabulary size |                     10,000 |
+| Maximum review length   |                 200 tokens |
+
+### Data Preprocessing
+
+1. Convert reviews to lowercase.
+2. Tokenize the text into words.
+3. Build a vocabulary using training reviews only.
+4. Convert words into integer token IDs.
+5. Replace unknown words with `<UNK>`.
+6. Pad shorter reviews and truncate longer ones to 200 tokens.
+
+**Special tokens:**
+
+* `<PAD>` → `0`
+* `<UNK>` → `1`
+
+**Input shape:** `(batch_size, sequence_length)`
+
+For a batch of 32 reviews:
 
 ```text
-Input:  [2, 4, 6, 8]
-Target: 10
+(32, 200)
 ```
 
-The model learns this relationship through training examples rather than relying on a predefined mathematical rule.
+---
 
 ## 2. Model Architecture
 
-The model contains two primary components:
-
-1. **Recurrent layer:** Processes the input sequence and updates its hidden state at every timestep.
-2. **Linear layer:** Converts the final recurrent output into the predicted value.
+The model consists of three main components: an **Embedding Layer, a Vanilla RNN, and a Linear Output Layer**.
 
 ```text
-        Input Sequence
-        [2, 4, 6, 8]
-               |
-               v
-        ┌─────────────┐
-        │  RNN Layer  │
-        │             │
-        │ h₁ → h₂     │
-        │      → h₃   │
-        │      → h₄   │
-        └─────────────┘
-               |
-               v
-       Final RNN Output
-               |
-               v
-        ┌─────────────┐
-        │ Linear Layer│
-        └─────────────┘
-               |
-               v
-       Predicted Next Value
+       Movie Review
+             |
+             v
+          Token IDs
+             |
+             v
+       Embedding Layer
+             |
+             v
+          Vanilla RNN
+             |
+             v
+      Final Hidden State
+             |
+             v
+         Linear Layer
+             |
+             v
+       Sentiment Logit
+             |
+             v
+     Positive / Negative
 ```
 
-The diagram represents the recurrent layer unrolled across the sequence. The same RNN parameters are shared across all timesteps.
+### A. Embedding Layer
 
-## 3. Implementation
+The embedding layer converts token IDs into learnable, dense vector representations.
 
-The model is defined in `core/rnn.py`.
+```python
+nn.Embedding(
+    num_embeddings=vocab_size,
+    embedding_dim=64,
+    padding_idx=0
+)
+```
 
-## 4. Understanding the Parameters
+With a vocabulary of 10,000 tokens and an embedding dimension of 64, the embedding matrix has the shape `(10000, 64)`.
 
-| Parameter     | Default | Meaning                                                          |
-| ------------- | ------: | ---------------------------------------------------------------- |
-| `input_size`  |       1 | Number of features at each timestep                              |
-| `hidden_size` |      16 | Number of features in the recurrent hidden state                 |
-| `num_layers`  |       1 | Number of stacked recurrent layers                               |
-| `output_size` |       1 | Number of predicted values                                       |
-| `batch_first` |  `True` | Places the batch dimension first in the input and output tensors |
+For a batch of 32 reviews:
 
-These parameters allow the model to be adapted to different sequential prediction tasks.
+```text
+Input:     (32, 200)
+Embedded:  (32, 200, 64)
+```
 
-For example, `input_size=3` could represent three measurements at each timestep, while `output_size=2` could produce two predicted values.
+The embeddings are learned during training rather than loaded from a pretrained model.
 
-## 5. How the RNN Processes Information
+### B. Recurrent Neural Network
 
-At each timestep, the RNN combines the current input with the previous hidden state.
+The RNN processes the embedded sequence one timestep at a time. At each timestep, it updates its hidden state using the current input and the previous hidden state.
 
-Conceptually, its computation is:
+**RNN configuration:**
+
+| Parameter        |       Value |
+| ---------------- | ----------: |
+| Input size       |          64 |
+| Hidden size      |          64 |
+| Number of layers |           1 |
+| Activation       |        Tanh |
+| Batch format     | Batch first |
+
+The hidden state is calculated as:
 
 $$
 h_t = \tanh(W_{ih}x_t + b_{ih} + W_{hh}h_{t-1} + b_{hh})
@@ -79,142 +113,113 @@ $$
 
 Where:
 
-* \(x_t\): Input at the current timestep.
-* \(h_{t-1}\): Hidden state from the previous timestep.
-* \(h_t\): Updated hidden state.
-* \(W_{ih}\): Input-to-hidden weights.
-* \(W_{hh}\): Hidden-to-hidden weights.
-* \(b_{ih}, b_{hh}\): Bias terms.
-* \(\tanh\): Nonlinear activation function.
+* \(x_t\): Input embedding at timestep \(t\).
+* \(h_t\): Current hidden state.
+* \(h_{t-1}\): Previous hidden state.
+* \(W_{ih}\) and \(W_{hh}\): Learnable weight matrices.
+* \(b_{ih}\) and \(b_{hh}\): Bias terms.
 
-The initial hidden state is zero by default when one is not explicitly supplied.
+The hidden state carries information forward through the sequence. The final hidden state is used as the representation for sentiment classification.
 
-The updated hidden state carries information forward through the sequence. However, it is a learned representation, not a perfect record of every previous input.
+### C. Linear Output Layer
 
-## 6. Forward Pass
-
-Consider the input sequence:
+The linear layer maps the final hidden representation to a single sentiment logit.
 
 ```python
-x = torch.tensor([
-    [[2.0], [4.0], [6.0], [8.0]]
-])
+nn.Linear(64, 1)
 ```
 
-Its shape is:
+For a batch of 32 reviews:
 
 ```text
-(batch_size, sequence_length, input_size)
-
-(1, 4, 1)
+Final hidden state: (32, 64)
+Output logits:      (32,)
 ```
 
-### Step 1: Recurrent processing
-
-```python
-output, hidden = self.rnn(x)
-```
-
-The RNN processes all four timesteps.
-
-For a single recurrent layer, the shapes are:
-
-```text
-output: (1, 4, 16)
-hidden: (1, 1, 16)
-```
-
-* `output` contains the hidden output for every timestep.
-* `hidden` contains the final hidden state for each recurrent layer.
-
-### Step 2: Select the final output
-
-```python
-last_output = output[:, -1, :]
-```
-
-This selects the output corresponding to the last timestep.
-
-Shape:
-
-```text
-(1, 16)
-```
-
-The model uses this representation to make its next-value prediction.
-
-### Step 3: Generate the prediction
-
-```python
-prediction = self.fc(last_output)
-```
-
-The linear layer maps the 16-dimensional recurrent output to one numerical value.
-
-Output shape:
-
-```text
-(1, 1)
-```
-
-The predicted value is not guaranteed to be `10`. It depends on the learned parameters and training process.
-
-## 7. How Does the Model Learn?
-
-The model can be trained using Mean Squared Error (MSE) for numerical prediction.
-
-The loss is:
+The output logit can be converted into a probability using the sigmoid function:
 
 $$
-L = \frac{1}{N}\sum_{i=1}^{N}(y_i-\hat{y}_i)^2
+p = \frac{1}{1 + e^{-z}}
+$$
+
+Where \(z\) is the output logit and \(p\) represents the predicted probability of a positive review.
+
+**Classification rule:**
+
+* Probability ≥ 0.5: Positive
+* Probability < 0.5: Negative
+
+---
+
+## 3. How Does the Model Learn?
+
+Since this project performs binary sentiment classification, the model uses **Binary Cross-Entropy with Logits Loss (`BCEWithLogitsLoss`)**.
+
+This loss function combines the sigmoid operation and binary cross-entropy into a numerically stable calculation.
+
+For a single example, the loss is:
+
+$$
+L = -\left[y\log(p) + (1-y)\log(1-p)\right]
 $$
 
 Where:
 
-* \(y_i\): Actual target.
-* \(\hat{y}_i\): Predicted value.
-* \(N\): Number of examples.
+* \(y\): Actual label (0 or 1).
+* \(p\): Predicted probability of the positive class.
 
-During training:
+### Training Process
 
-1. The model processes the input sequence.
-2. The linear layer produces a prediction.
-3. The loss measures the difference between the prediction and the target.
-4. Backpropagation calculates gradients through the output layer and recurrent computations.
-5. The optimizer updates the parameters.
+1. The model receives a batch of tokenized reviews.
+2. The embedding layer converts token IDs into vectors.
+3. The RNN processes the sequence and produces a final hidden state.
+4. The linear layer generates sentiment logits.
+5. The loss function measures the prediction error.
+6. Backpropagation calculates gradients through the output layer, RNN, and embedding layer.
+7. The optimizer updates the model parameters.
 
-Because the recurrent computation is unrolled across timesteps, this training process is known as **Backpropagation Through Time (BPTT)**.
+Because the recurrent computation is unfolded across timesteps during gradient calculation, this training process is known as **Backpropagation Through Time (BPTT)**.
 
-## 8. Limitations
+---
 
-This is a basic RNN, intentionally kept simple for educational purposes.
+## 4. Limitations
 
-### Sequential computation
+This is a basic Vanilla RNN, intentionally kept simple for educational purposes.
 
-Each timestep depends on the preceding hidden state. Therefore, recurrent computation within a sequence cannot generally be parallelized in the same way as independent feed-forward operations.
+### Sequential Computation
 
-### Vanishing and exploding gradients
+Each timestep depends on the preceding hidden state. Consequently, recurrent computations within a sequence cannot generally be parallelized across timesteps in the same way as independent feed-forward operations.
 
-During BPTT, gradients may become very small or very large as they propagate through many timesteps. This can make learning long-term dependencies difficult.
+### Vanishing and Exploding Gradients
 
-### Limited long-term memory
+During BPTT, gradients can become very small or very large as they propagate through many timesteps. This makes learning long-term dependencies difficult.
 
-The hidden state has a fixed dimensionality. Although it can encode information from earlier inputs, it may fail to preserve information needed much later in a sequence.
+### Limited Long-Term Memory
 
-### Learning depends on the dataset
+The hidden state has a fixed dimensionality. Although it can encode information from earlier inputs, it may struggle to preserve relevant information across long sequences.
 
-A model trained on simple numerical sequences may learn those patterns without generalizing to more complex sequences.
+### Padding and Truncation
 
-## 9. Learning Objective
+Reviews are padded or truncated to a fixed length of 200 tokens. Padding can influence the final hidden state unless handled appropriately, while truncation removes information beyond the selected length.
 
-This model demonstrates how recurrent computation allows a neural network to process ordered data while carrying a hidden representation from one timestep to the next.
+### Dependence on Training Data
 
-The central concepts are:
+The model learns patterns from the training reviews. Its ability to classify unseen reviews depends on how well those learned patterns generalize beyond the training data.
 
-* Recurrent connections.
-* Hidden-state updates.
-* Shared parameters across timesteps.
-* Sequence-to-one prediction.
-* Backpropagation Through Time.
-* The challenges of learning long-term dependencies.
+---
 
+## 5. Learning Objectives
+
+This project demonstrates how recurrent computation enables a neural network to process ordered data while maintaining a hidden representation across timesteps.
+
+The key concepts are:
+
+* **Embeddings:** Learning vector representations of tokens.
+* **Recurrent connections:** Passing information between timesteps.
+* **Hidden-state updates:** Combining current inputs with previous state information.
+* **Shared parameters:** Reusing the same recurrent weights across timesteps.
+* **Sequence classification:** Mapping an entire review to a sentiment prediction.
+* **Backpropagation Through Time:** Training recurrent computations through gradient propagation.
+* **Long-term dependency challenges:** Understanding why basic RNNs can struggle with extended sequences.
+
+The next step is to explore **Long Short-Term Memory (LSTM)** networks, which introduce gating mechanisms to help preserve and control information across longer sequences.

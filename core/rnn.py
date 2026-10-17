@@ -5,35 +5,52 @@ import torch.nn as nn
 class RNN(nn.Module):
     def __init__(
         self,
-        input_size=1,
-        hidden_size=16,
+        vocab_size,
+        embedding_dim=64,
+        hidden_size=64,
         num_layers=1,
-        output_size=1
+        output_size=1,
+        dropout=0.0,
     ):
         super().__init__()
 
-        # Recurrent layer
+        # Convert token IDs into learnable vectors.
+        self.embedding = nn.Embedding(
+            num_embeddings=vocab_size,
+            embedding_dim=embedding_dim,
+            padding_idx=0,
+        )
+
+        # Process the embedded sequence.
         self.rnn = nn.RNN(
-            input_size=input_size,
+            input_size=embedding_dim,
             hidden_size=hidden_size,
             num_layers=num_layers,
-            batch_first=True
+            batch_first=True,
+            nonlinearity="tanh",
+            dropout=dropout if num_layers > 1 else 0.0,
         )
 
-        # Prediction layer
-        self.fc = nn.Linear(
-            hidden_size,
-            output_size
-        )
+        # Predict the sentiment.
+        self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        # Process the input sequence
-        output, hidden = self.rnn(x)
+        # x: (batch_size, sequence_length)
 
-        # Use the final timestep's output
-        last_output = output[:, -1, :]
+        # Convert token IDs into embeddings.
+        embedded = self.embedding(x)
+        # (batch_size, sequence_length, embedding_dim)
 
-        # Predict the next value
-        prediction = self.fc(last_output)
+        # Process the sequence.
+        _, hidden = self.rnn(embedded)
+        # hidden: (num_layers, batch_size, hidden_size)
 
-        return prediction
+        # Extract the final layer's hidden state.
+        final_hidden = hidden[-1]
+        # (batch_size, hidden_size)
+
+        # Produce one logit per review.
+        logits = self.fc(final_hidden)
+        # (batch_size, 1)
+
+        return logits.squeeze(-1)
